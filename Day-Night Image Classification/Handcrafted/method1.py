@@ -4,6 +4,7 @@
 import sys
 import cv2
 import csv
+import os
 import numpy as np
 
 # Get average brightness of daytime images in a given train dataset
@@ -47,7 +48,7 @@ def classify_dataset(thresholding, train_root_dir, train_label_file, val_root_di
 
     with open(train_label_file) as file:
         csv_reader = csv.reader(file, delimiter=',')
-        
+
         # row := [image_filename,label]
         for row in csv_reader:
             
@@ -77,6 +78,23 @@ def classify_dataset(thresholding, train_root_dir, train_label_file, val_root_di
     # Return single-element tuple (keep return pattern)
     return (corrects_train/n_inputs_train, )
 
+def perform_inference(thresholding, root_dir):
+
+    day_count = 0
+    night_count = 0
+
+    for filename in os.listdir(root_dir):
+        
+        if os.path.isfile(f"{root_dir}/{filename}"):            
+        
+            image = cv2.imread(f"{root_dir}/{filename}")
+            predict = classifier(image, thresholding)
+        
+            day_count += predict == 0
+            night_count += predict == 1
+        
+    return (day_count, night_count)
+
 if __name__ == "__main__":
     
     # Receive classify_dataset function parameters from terminal args
@@ -91,6 +109,7 @@ if __name__ == "__main__":
         val_label_file = sys.argv[4]
     
     thresholding = get_avg_brightness(train_root_dir, train_label_file)
+    #print(thresholding) 100.28866163299817
     
     acc1 = classify_dataset(thresholding, train_root_dir, train_label_file, val_root_dir, val_label_file)
     acc2 = classify_dataset(thresholding*0.8, train_root_dir, train_label_file, val_root_dir, val_label_file)

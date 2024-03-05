@@ -8,6 +8,7 @@
 import sys
 import cv2
 import csv
+import os
 import numpy as np
 
 # Baseline values normalized to [0,1] range to calculate Nh and Nv values (see above-mentioned reference for more details)
@@ -31,7 +32,7 @@ def get_avg_thresholds(train_root_dir, train_label_file):
         
         # row := [image_filename,label]
         for row in csv_reader:
-        
+                
             # Verify if the given dataset entry is some daytime image (label=0)
             if int(row[1]) == 0:
                 
@@ -79,7 +80,7 @@ def classifier(image, thresholding_h, thresholding_v):
     nh = (nh_partial1 + nh_partial2)/(image.shape[0]*image.shape[1])
     nv = cv2.threshold(v,NORMALIZED_BASE_VALUE,1,cv2.THRESH_BINARY)[1].sum()/(image.shape[0]*image.shape[1])
 
-    return int(nh >= thresholding_h or nv <= thresholding_v)
+    return int(nh > thresholding_h and nv < thresholding_v)
 
 
 # Iterate over the training images, perform classification and return accuracy obtained
@@ -93,6 +94,7 @@ def classify_dataset(thresholding_h, thresholding_v, train_root_dir, train_label
         csv_reader = csv.reader(file, delimiter=',')
         
         for row in csv_reader:
+
             
             image = cv2.imread(f"{train_root_dir}/{row[0]}")
             predict = classifier(image, thresholding_h, thresholding_v)
@@ -108,7 +110,7 @@ def classify_dataset(thresholding_h, thresholding_v, train_root_dir, train_label
             csv_reader = csv.reader(file, delimiter=',')
             
             for row in csv_reader:
-                
+
                 image = cv2.imread(f"{val_root_dir}/{row[0]}")
                 predict = classifier(image, thresholding_h, thresholding_v)
                 corrects_val += (predict == int(row[1]))
@@ -118,6 +120,23 @@ def classify_dataset(thresholding_h, thresholding_v, train_root_dir, train_label
 
     # Return single-element tuple (keep return pattern)
     return (corrects_train/n_inputs_train, )
+
+def perform_inference(thresholding_h, thresholding_v, root_dir):
+
+    day_count = 0
+    night_count = 0
+
+    for filename in os.listdir(root_dir):
+        
+        if os.path.isfile(f"{root_dir}/{filename}"):            
+        
+            image = cv2.imread(f"{root_dir}/{filename}")
+            predict = classifier(image, thresholding_h, thresholding_v)
+        
+            day_count += predict == 0
+            night_count += predict == 1
+                
+    return (day_count, night_count)
 
 if __name__ == "__main__":
     
@@ -133,6 +152,7 @@ if __name__ == "__main__":
         val_label_file = sys.argv[4]
     
     thresholding_h, thresholding_v = get_avg_thresholds(train_root_dir, train_label_file)
+    #print(thresholding_h, thresholding_v) 0.31502976440243524 0.2401562484890622
     
     acc1 = classify_dataset(thresholding_h, thresholding_v, train_root_dir, train_label_file, val_root_dir, val_label_file)
     acc2 = classify_dataset(thresholding_h*0.8, thresholding_v*0.8, train_root_dir, train_label_file, val_root_dir, val_label_file)

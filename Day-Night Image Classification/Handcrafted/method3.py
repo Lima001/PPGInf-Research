@@ -11,12 +11,13 @@
 import sys
 import cv2
 import csv
+import os
 import numpy as np
 
 # Base threshold; adapted from the above-mentioned reference to consider only day-night time classification
 BASE_NIGHT_DAY = 65
 
-def intensity_classifier(image, threshold):
+def classifier(image, threshold):
     
     # Get normalized intensity image
     intensity_image = np.mean(image, axis=-1)
@@ -42,7 +43,7 @@ def classify_dataset(thresholding, train_root_dir, train_label_file, val_root_di
         for row in csv_reader:
             
             image = cv2.imread(f"{train_root_dir}/{row[0]}")
-            predict = intensity_classifier(image, thresholding)            
+            predict = classifier(image, thresholding)            
             corrects_train += predict == int(row[1])
             n_inputs_train += 1
 
@@ -58,7 +59,7 @@ def classify_dataset(thresholding, train_root_dir, train_label_file, val_root_di
             for row in csv_reader:
                 
                 image = cv2.imread(f"{val_root_dir}/{row[0]}")
-                predict = intensity_classifier(image, thresholding)
+                predict = classifier(image, thresholding)
                 corrects_val += predict == int(row[1])
                 n_inputs_val += 1
 
@@ -67,6 +68,23 @@ def classify_dataset(thresholding, train_root_dir, train_label_file, val_root_di
 
     # Return single-element tuple (keep return pattern)
     return (corrects_train/n_inputs_train, )
+
+def perform_inference(thresholding, root_dir):
+
+    day_count = 0
+    night_count = 0
+
+    for filename in os.listdir(root_dir):
+        
+        if os.path.isfile(f"{root_dir}/{filename}"):            
+        
+            image = cv2.imread(f"{root_dir}/{filename}")
+            predict = classifier(image, thresholding)
+        
+            day_count += predict == 0
+            night_count += predict == 1
+                
+    return (day_count, night_count)
 
 if __name__ == "__main__":
     
@@ -82,6 +100,7 @@ if __name__ == "__main__":
         val_label_file = sys.argv[4]
 
     thresholding = BASE_NIGHT_DAY
+    
     acc1 = classify_dataset(thresholding, train_root_dir, train_label_file, val_root_dir, val_label_file)
     acc2 = classify_dataset(thresholding*0.8, train_root_dir, train_label_file, val_root_dir, val_label_file)
 

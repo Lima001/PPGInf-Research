@@ -1,0 +1,10 @@
+Epoch 1/10 train_loss: 0.6919 - train_acc: 0.5669 - val_loss: 0.6056 - val_acc: 0.7668
+Epoch 2/10 train_loss: 0.6045 - train_acc: 0.6785 - val_loss: 0.5314 - val_acc: 0.8948
+Epoch 3/10 train_loss: 0.5351 - train_acc: 0.7639 - val_loss: 0.4690 - val_acc: 0.9413
+Epoch 4/10 train_loss: 0.4775 - train_acc: 0.8255 - val_loss: 0.4144 - val_acc: 0.9608
+Epoch 5/10 train_loss: 0.4245 - train_acc: 0.8723 - val_loss: 0.3658 - val_acc: 0.9710
+Epoch 6/10 train_loss: 0.3788 - train_acc: 0.9033 - val_loss: 0.3227 - val_acc: 0.9754
+Epoch 7/10 train_loss: 0.3384 - train_acc: 0.9233 - val_loss: 0.2843 - val_acc: 0.9780
+Epoch 8/10 train_loss: 0.3015 - train_acc: 0.9400 - val_loss: 0.2507 - val_acc: 0.9808
+Epoch 9/10 train_loss: 0.2693 - train_acc: 0.9505 - val_loss: 0.2215 - val_acc: 0.9816
+Epoch 10/10 train_loss: 0.2420 - train_acc: 0.9562 - val_loss: 0.1963 - val_acc: 0.9824
