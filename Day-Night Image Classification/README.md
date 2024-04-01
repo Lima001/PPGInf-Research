@@ -12,7 +12,7 @@ For this purpose, we are utilizing the following datasets: [BDD100K](https://ope
 
 To further challenge the classification problem, the methods are evaluated using cropped images of vehicles. This study aims to prompt the development of robust methods that rely solely on vehicle images, with limited scene information.
 
-# Problems
+# Difficulties
 
 Although the studied methods, especially the Deep Learning ones, may perform well on the training/evaluation dataset, the classifiers fail to perform adequately on evaluation-only data. Hence, the developed methods currently lack robustness.
 
