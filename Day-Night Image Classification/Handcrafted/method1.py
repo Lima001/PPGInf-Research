@@ -1,117 +1,53 @@
 # Inspired by https://github.com/jayeshsaita/Day-Night-Classifier base model classifier
 # Method description: Day-Night Classifier based on brightness (value) thresholding on HSV color space
 
-import sys
-import cv2
-import csv
-import os
-import numpy as np
+import torch
+from torcheval.metrics.functional import multiclass_confusion_matrix
+from tqdm import tqdm
 
-# Get average brightness of daytime images in a given train dataset
-# The obtained value is further used as thresholding in image processing
-def get_avg_brightness(train_root_dir, train_label_file):
+def get_avg_brightness(device, dataloader, dataset_size):
     
     brightness_sum = 0.0
-    n_inputs = 0
 
-    with open(train_label_file) as file:
-        csv_reader = csv.reader(file, delimiter=',')
+    with tqdm(dataloader, unit="batch") as t:
+
+        t.set_description(f"get treshold")
         
-        # row := [image_filename,label]
-        for row in csv_reader:
+        for inputs, _ in t:
             
-            # Verify if the given dataset entry is some daytime image (label=0)
-            if int(row[1]) == 0: 
-            
-                image = cv2.imread(f"{train_root_dir}/{row[0]}")
-                image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-                brightness_sum += np.mean(image_hsv[:, :, 2])
-                n_inputs += 1
+            inputs = inputs.to(device)
+            brightness_sum += inputs.mean(dim=[2,3], dtype=torch.float).sum(dim=0)[2]
 
-    return brightness_sum/n_inputs
+    return brightness_sum/dataset_size
 
-# Classification method based on brightness thresholding
-def classifier(image, thresholding):
     
-    image_hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    brightness = np.mean(image_hsv[:, :, 2])
-    
-    # If brightness if less than the thresholding, then it's classified as nighttime image (label=1)
-    return (brightness < thresholding)
+def classify_dataset(device, dataloaders, class_names, dataset_sizes, threshold):
 
-# Iterate over the training images, perform classification and return accuracy obtained
-# To classify the validation dataset pass val_root_dir and val_label_file parameters
-def classify_dataset(thresholding, train_root_dir, train_label_file, val_root_dir=None, val_label_file=None):
+    for phase in ['train', 'val']:
+        if phase == "val":
+            confusion_matrix = torch.zeros((len(class_names), len(class_names))).to(device)
 
-    corrects_train = 0
-    n_inputs_train = 0
+        running_corrects = 0
 
-    with open(train_label_file) as file:
-        csv_reader = csv.reader(file, delimiter=',')
+        with tqdm(dataloaders[phase], unit="batch") as t:
 
-        # row := [image_filename,label]
-        for row in csv_reader:
+            t.set_description(f"{phase} classification")
             
-            image = cv2.imread(f"{train_root_dir}/{row[0]}")
-            predict = classifier(image, thresholding)
-            corrects_train += (predict == int(row[1]))
-            n_inputs_train += 1
-
-    if val_root_dir is not None and val_label_file is not None:
-
-        corrects_val = 0
-        n_inputs_val = 0
-
-        with open(val_label_file) as file:
-            csv_reader = csv.reader(file, delimiter=',')
-            
-            # row := [image_filename,label]
-            for row in csv_reader:
+            for inputs, targets in t:
+                inputs, targets = inputs.to(device), targets.to(device)
+                preds = (inputs.mean(dim=[2,3], dtype=torch.float)[:,2] < threshold).int()
                 
-                image = cv2.imread(f"{val_root_dir}/{row[0]}")
-                predict = classifier(image, thresholding)
-                corrects_val += (predict == int(row[1]))
-                n_inputs_val += 1
+                if phase == "val":
+                    confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
 
-        return (corrects_train/n_inputs_train, corrects_val/n_inputs_val)
+                running_corrects += torch.sum(preds == targets)
 
-    # Return single-element tuple (keep return pattern)
-    return (corrects_train/n_inputs_train, )
+            acc = running_corrects.double() / dataset_sizes[phase]
+            print(f'{phase} acc: {acc:.4f}')
 
-def perform_inference(thresholding, root_dir):
-
-    day_count = 0
-    night_count = 0
-
-    for filename in os.listdir(root_dir):
-        
-        if os.path.isfile(f"{root_dir}/{filename}"):            
-        
-            image = cv2.imread(f"{root_dir}/{filename}")
-            predict = classifier(image, thresholding)
-        
-            day_count += predict == 0
-            night_count += predict == 1
-        
-    return (day_count, night_count)
-
-if __name__ == "__main__":
-    
-    # Receive classify_dataset function parameters from terminal args
-    train_root_dir = sys.argv[1]
-    train_label_file = sys.argv[2]
-    val_root_dir = None
-    val_label_file = None
-
-    # Expected validation dataset info
-    if len(sys.argv) == 5:
-        val_root_dir = sys.argv[3] 
-        val_label_file = sys.argv[4]
-    
-    thresholding = get_avg_brightness(train_root_dir, train_label_file)
-    #print(thresholding) 100.28866163299817
-    
-    acc1 = classify_dataset(thresholding, train_root_dir, train_label_file, val_root_dir, val_label_file)
-    acc2 = classify_dataset(thresholding*0.8, train_root_dir, train_label_file, val_root_dir, val_label_file)
-    
-    print(acc1,acc2,sep='\n')
+            if phase == "val":
+                print("Confusion matrix (raw counts)")
+                for i in range(len(class_names)):
+                    for j in range(len(class_names)):
+                        print(int(confusion_matrix[i][j]), end="\t")
+                    print()

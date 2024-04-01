@@ -1,148 +1,291 @@
 import os
 import sys
+import argparse
+import random
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
+from torcheval.metrics.functional import multiclass_confusion_matrix
 from albumentations import *
 from albumentations.pytorch import ToTensorV2
+from tempfile import TemporaryDirectory
+from PIL import Image
 from tqdm import tqdm
-from dataset import CustomDataset
 
 os.environ["WDM_PROGRESS_BAR"] = "0"
 
-EPOCHS = 10
-BATCH_SIZE = 32
-LR = 1e-6
-NUM_CLASSES = 2
+EPOCHS = 5
+BATCH_SIZE = 4
+LR = 1e-4
+STEP_SIZE = 2
+GAMMA = 0.1
+SAVE_CONFIG = "./"
 
-def train_and_test(device, model, train_set, test_set, optimizer, loss_function, epochs=EPOCHS):
+class Transform():
     
-    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, pin_memory=False)
-    test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=False)
+    def __init__(self,transform):
+        self.transform=transform
     
+    def __call__(self,image):
+        return self.transform(image=image)["image"]
+    
+    @staticmethod
+    def open_img(img_path):
+        img = Image.open(img_path)
+        return np.array(img)
+
+def get_vgg16():
+
+    model = torchvision.models.vgg16(weights='DEFAULT')
+
+    for param in model.parameters():
+        param.requires_grad = False
+
+    num_features = model.classifier[6].in_features
+    features = list(model.classifier.children())[:-1]
+    features.extend([nn.Linear(num_features, len(class_names))])
+    model.classifier = nn.Sequential(*features)
+    nn.init.xavier_uniform_(model.classifier[6].weight)
+    nn.init.constant_(model.classifier[6].bias, 0.0)
+
+    return model
+
+def get_resnet18():
+    
+    model = torchvision.models.resnet18(weights='DEFAULT')
+
+    for param in model.parameters():
+        param.requires_grad = False
+
+    num_features = model.fc.in_features
+    model.fc = nn.Linear(num_features, len(class_names))
+    nn.init.xavier_uniform_(model.fc.weight)
+    nn.init.constant_(model.fc.bias, 0.0)
+
+    return model
+
+def get_inception_v3():
+
+    model = torchvision.models.inception_v3(weights='DEFAULT')
+
+    for param in model.parameters():
+        param.requires_grad = False
+
+    num_features = model.fc.in_features
+    model.fc = nn.Linear(num_features, len(class_names))
+    model.aux_logits = False
+    model.AuxLogits = None
+    nn.init.xavier_uniform_(model.fc.weight)
+    nn.init.constant_(model.fc.bias, 0.0)
+
+    return model
+
+def train_model(device, model, dataloaders, optimizer, loss_function, epochs, class_names, dataset_sizes):
+
     torch.cuda.empty_cache()
     
     # Transfer model to GPU
     model.to(device)
-
+    
+    best_model_params_path = os.path.join(SAVE_CONFIG, f'{args.model}_best_params.pt')
+    torch.save(model.state_dict(), best_model_params_path)
+    best_acc = 0.0
+        
     # Train the model. In PyTorch we have to implement the training loop ourselves.
-    for epochs in range(EPOCHS):
-        
-        model.train() # Set model in training mode.
-        
-        train_loss = 0.0
-        train_correct = 0
-        train_batches = 0
+    for epoch in range(1, epochs+1):
 
-        with tqdm(train_loader, unit="batch") as tepoch:
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()  # Set model to training mode
+            else:
+                model.eval()   # Set model to evaluate mode
+                confusion_matrix = torch.zeros((len(class_names), len(class_names))).to(device)
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            with tqdm(dataloaders[phase], unit="batch") as tepoch:
             
-            for inputs, targets in tepoch:
-                tepoch.set_description(f"Train epoch {epochs}")
+                for inputs, targets in tepoch:
+                    tepoch.set_description(f"{phase} epoch {epoch}")
                 
-                # Move data to GPU.
-                one_hot_targets = nn.functional.one_hot(targets, num_classes=NUM_CLASSES).float()
-                inputs, targets, one_hot_targets = inputs.to(device), targets.to(device), one_hot_targets.to(device)
+                    # Move data to GPU.
+                    one_hot_targets = nn.functional.one_hot(targets, num_classes=len(class_names)).float()
+                    inputs, targets, one_hot_targets = inputs.to(device), targets.to(device), one_hot_targets.to(device)
                 
-                #print("Targets: ", targets, one_hot_targets)
+                    # Zero the parameter gradients.
+                    optimizer.zero_grad()
 
-                # Zero the parameter gradients.
-                optimizer.zero_grad()
+                    with torch.set_grad_enabled(phase == 'train'):
+                        outputs = model(inputs)
+                        _, preds = torch.max(outputs, 1)
+                        loss = loss_function(outputs, one_hot_targets)
 
-                # Forward pass.
-                outputs = model(inputs)
-                loss = loss_function(outputs, one_hot_targets)
-
-                # Accumulate metrics.
-                _, indices = torch.max(outputs.data, 1)
-                train_correct += (indices == targets).sum().item()          
-                train_batches +=  1
-                train_loss += loss.item()
+                        # backward + optimize only if in training phase
+                        if phase == 'train':
+                            loss.backward()
+                            optimizer.step()
+                        else:
+                            confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
+                            
+                    # statistics
+                    running_loss += loss.item() * inputs.size(0)
+                    running_corrects += torch.sum(preds == targets)
                 
-                # Backward pass and update.
-                loss.backward()
-                optimizer.step()
+                if phase == 'train':
+                    scheduler.step()
 
-        train_loss = train_loss / train_batches
-        train_acc = train_correct / len(train_set)
+                epoch_loss = running_loss / dataset_sizes[phase]
+                epoch_acc = running_corrects.double() / dataset_sizes[phase]
+
+                print(f'{phase} epoch {epoch} - Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
+
+                # deep copy the model
+                if phase == 'val':
+                        
+                    if epoch_acc > best_acc:
+                        best_acc = epoch_acc
+                        torch.save(model.state_dict(), best_model_params_path)                    
+
+
+                    print("Confusion matrix (raw counts)")
+                    for i in range(len(class_names)):
+                        for j in range(len(class_names)):
+                            print(int(confusion_matrix[i][j]), end="\t")
+                        print()
         
-        # Evaluate the model on the test dataset. Identical to loop above but without
-        # weight adjustment.
-        model.eval() # Set model in inference mode.
+    print(f'Best val Acc: {best_acc:4f}')    
+    model.load_state_dict(torch.load(best_model_params_path))
+    
+    return model            
 
-        test_loss = 0.0
-        test_correct = 0
-        test_batches = 0
-            
-        with tqdm(test_loader, unit="batch") as tepoch:
+def visualize_model(device, model, dataloaders, num_images=6):
 
-            for inputs, targets in tepoch:
-                tepoch.set_description(f"Test epoch {epochs}")
+    was_training = model.training
+    model.eval()
+    images_so_far = 0
+    fig = plt.figure()
 
-                one_hot_targets = nn.functional.one_hot(targets, num_classes=NUM_CLASSES).float()
-                inputs, targets, one_hot_targets = inputs.to(device), targets.to(device), one_hot_targets.to(device)
-                outputs = model(inputs)
-                loss = loss_function(outputs, one_hot_targets)
-                _, indices = torch.max(outputs, 1)
-                test_correct += (indices == targets).sum().item()
-                test_batches +=  1
-                test_loss += loss.item()
+    with torch.no_grad():
+        for i, (inputs, labels) in enumerate(dataloaders['val']):
+            inputs = inputs.to(device)
+            labels = labels.to(device)
 
-        test_loss = test_loss / test_batches
-        test_acc = test_correct / len(test_set)
+            outputs = model(inputs)
+            _, preds = torch.max(outputs, 1)
 
-        print(f'Epoch {epochs+1}/{EPOCHS} train_loss: {train_loss:.4f} - train_acc: {train_acc:0.4f} - val_loss: {test_loss:.4f} - val_acc: {test_acc:0.4f}')
+            for j in range(inputs.size()[0]):
+                images_so_far += 1
+                ax = plt.subplot(num_images//2, 2, images_so_far)
+                ax.axis('off')
+                ax.set_title(f'predicted: {class_names[preds[j]]}')
+                imshow(inputs.cpu().data[j])
 
-def main_vgg16(device, train_set, test_set):
+                if images_so_far == num_images:
+                    model.train(mode=was_training)
+                    return
         
-    model = torchvision.models.vgg16(weights='DEFAULT')
+        model.train(mode=was_training)
 
-    for param in model.parameters():
-        param.require_grad = False
-
-    num_features = model.classifier[6].in_features
-    features = list(model.classifier.children())[:-1]
-    features.extend([nn.Linear(num_features, NUM_CLASSES)])
-    model.classifier = nn.Sequential(*features)
+def model_prediction(device, model, data_transforms, img_path, graphics=False):
     
-    nn.init.xavier_uniform_(model.classifier[6].weight)
-    nn.init.constant_(model.classifier[6].bias, 0.0)
+    was_training = model.training
+    model.eval()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=LR)
-    loss_function = nn.CrossEntropyLoss()
+    img = Image.open(img_path)
+    img = data_transforms['val'](img)
+    img = img.unsqueeze(0)
+    img = img.to(device)
 
-    train_and_test(device, model, train_set, test_set, optimizer, loss_function)
-    torch.save(model.state_dict(), f'vgg16.pth')
-    
-def main_resnet50(device, train_set, test_set):
+    with torch.no_grad():
+        outputs = model(img)
+        _, preds = torch.max(outputs, 1)
 
-    model = torchvision.models.resnet50(weights='DEFAULT')
+        if graphics:
+            ax = plt.subplot(2,2,1)
+            ax.axis('off')
+            ax.set_title(f'Predicted: {class_names[preds[0]]}')
+            imshow(img.cpu().data[0])
 
-    for param in model.parameters():
-        param.require_grad = False
+        model.train(mode=was_training)
 
-    num_features = model.fc.in_features
-    model.fc = nn.Linear(num_features, NUM_CLASSES)
-    nn.init.xavier_uniform_(model.fc.weight)
-    nn.init.constant_(model.fc.bias, 0.0)
-
-    optimizer = torch.optim.SGD(model.parameters(), lr=LR)
-    loss_function = nn.CrossEntropyLoss()
-
-    train_and_test(device, model, train_set, test_set, optimizer, loss_function)
-    torch.save(model.state_dict(), f'resnet50.pth')
+    return preds[0]
 
 if __name__ == "__main__":
-
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-
-    transform = Compose([
-        Resize(224,224),
-        Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ToTensorV2()
-    ])
-
-    train_set = CustomDataset(device, sys.argv[2], sys.argv[1], transform=transform)
-    test_set = CustomDataset(device, sys.argv[4], sys.argv[3], transform=transform)
     
-    main_resnet50(device, train_set, test_set)
+    torch.set_num_threads(1)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device")
+    parser.add_argument("--data_dir")
+    parser.add_argument("--model")
+    parser.add_argument("--seed")
+    args = parser.parse_args()
+    
+    if args.seed is None:
+        args.seed = 0
+
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)    
+    
+    device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
+
+    # Data augmentation and normalization for training
+    # Just normalization for validation
+    data_transforms = {
+        'train': Transform(Compose([
+            Resize(299,299),
+            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            Rotate(limit=15, p=0.5),
+            HorizontalFlip(p=0.5),
+            RandomBrightnessContrast(p=0.2),
+            Blur(p=0.2),
+            ToTensorV2()
+        ])),
+        'val': Transform(Compose([
+            Resize(299,299),
+            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2()
+        ])),
+    }    
+    
+    image_datasets = {
+            x: torchvision.datasets.ImageFolder(os.path.join(args.data_dir, x), 
+                                                data_transforms[x], 
+                                                loader=Transform.open_img) 
+            for x in ['train', 'val']
+    }
+    
+    dataloaders = {
+            x: torch.utils.data.DataLoader( image_datasets[x], 
+                                            batch_size=BATCH_SIZE, 
+                                            shuffle=True, 
+                                            num_workers=0,
+                                            pin_memory=False) 
+            for x in ['train', 'val']
+    }
+    
+    dataset_sizes = {
+            x: len(image_datasets[x]) 
+            for x in ['train', 'val']
+    }
+    
+    class_names = image_datasets['train'].classes
+    #print(class_names)
+
+    if args.model == "vgg16":
+        model = get_vgg16()
+    elif args.model == "resnet18":
+        model = get_resnet18()
+    elif args.model == "inception_v3":
+        model = get_inception_v3()
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    loss_function = nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
+
+    train_model(device, model, dataloaders, optimizer, loss_function, EPOCHS, class_names, dataset_sizes)
