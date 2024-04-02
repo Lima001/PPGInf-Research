@@ -22,7 +22,6 @@ BATCH_SIZE = 4
 LR = 1e-4
 STEP_SIZE = 2
 GAMMA = 0.1
-SAVE_CONFIG = "./"
 
 class Transform():
     
@@ -90,7 +89,7 @@ def train_model(device, model, dataloaders, optimizer, loss_function, epochs, cl
     # Transfer model to GPU
     model.to(device)
     
-    best_model_params_path = os.path.join(SAVE_CONFIG, f'{args.model}_best_params.pt')
+    best_model_params_path = os.path.join(args.save, f'{args.model}_best_params.pt')
     torch.save(model.state_dict(), best_model_params_path)
     best_acc = 0.0
         
@@ -162,15 +161,60 @@ def train_model(device, model, dataloaders, optimizer, loss_function, epochs, cl
     
     return model            
 
-def visualize_model(device, model, dataloaders, num_images=6):
+def evaluate_model(device, model, dataloader, class_names, dataset_size):
 
-    was_training = model.training
+    torch.cuda.empty_cache()
+    
+    # Transfer model to GPU
+    model.to(device)
+    model.eval()   
+    
+    confusion_matrix = torch.zeros((len(class_names), len(class_names))).to(device)
+    running_loss = 0.0
+    running_corrects = 0
+
+    with tqdm(dataloader, unit="batch") as t:
+    
+        for inputs, targets in t:
+            tepoch.set_description(f"evaluating")
+        
+            # Move data to GPU.
+            one_hot_targets = nn.functional.one_hot(targets, num_classes=len(class_names)).float()
+            inputs, targets, one_hot_targets = inputs.to(device), targets.to(device), one_hot_targets.to(device)
+        
+            # Zero the parameter gradients.
+            optimizer.zero_grad()
+
+            with torch.set_grad_enabled(False):
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+                loss = loss_function(outputs, one_hot_targets)
+                confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
+                    
+            # statistics
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == targets)
+
+        eval_loss = running_loss / dataset_size
+        eval_corrects = running_corrects.double() / dataset_size
+
+        print(f'Loss: {eval_loss:.4f} Acc: {eval_corrects:.4f}')
+                 
+        print("Confusion matrix (raw counts)")
+        for i in range(len(class_names)):
+            for j in range(len(class_names)):
+                print(int(confusion_matrix[i][j]), end="\t")
+            print()
+
+
+def visualize_model(device, model, dataloader, num_images=6):
+
     model.eval()
     images_so_far = 0
     fig = plt.figure()
 
     with torch.no_grad():
-        for i, (inputs, labels) in enumerate(dataloaders['val']):
+        for i, (inputs, labels) in enumerate(dataloader):
             inputs = inputs.to(device)
             labels = labels.to(device)
 
@@ -185,18 +229,14 @@ def visualize_model(device, model, dataloaders, num_images=6):
                 imshow(inputs.cpu().data[j])
 
                 if images_so_far == num_images:
-                    model.train(mode=was_training)
                     return
-        
-        model.train(mode=was_training)
 
-def model_prediction(device, model, data_transforms, img_path, graphics=False):
+def model_prediction(device, model, data_transform, img_path, graphics=False):
     
-    was_training = model.training
     model.eval()
 
     img = Image.open(img_path)
-    img = data_transforms['val'](img)
+    img = data_transforms(img)
     img = img.unsqueeze(0)
     img = img.to(device)
 
@@ -210,8 +250,6 @@ def model_prediction(device, model, data_transforms, img_path, graphics=False):
             ax.set_title(f'Predicted: {class_names[preds[0]]}')
             imshow(img.cpu().data[0])
 
-        model.train(mode=was_training)
-
     return preds[0]
 
 if __name__ == "__main__":
@@ -222,6 +260,7 @@ if __name__ == "__main__":
     parser.add_argument("--device")
     parser.add_argument("--data_dir")
     parser.add_argument("--model")
+    parser.add_argument("--save")
     parser.add_argument("--seed")
     args = parser.parse_args()
     
@@ -238,16 +277,16 @@ if __name__ == "__main__":
     # Just normalization for validation
     data_transforms = {
         'train': Transform(Compose([
-            Resize(299,299),
+            Resize(224,224),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             Rotate(limit=15, p=0.5),
             HorizontalFlip(p=0.5),
-            RandomBrightnessContrast(p=0.2),
+            RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.2),
             Blur(p=0.2),
             ToTensorV2()
         ])),
         'val': Transform(Compose([
-            Resize(299,299),
+            Resize(224,224),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ])),

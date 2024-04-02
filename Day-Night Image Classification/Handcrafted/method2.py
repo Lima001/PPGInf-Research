@@ -29,8 +29,8 @@ def get_avg_thresholds(device, dataloader, dataset_size):
                 
             nh_partial1 = (inputs[:,0,:,:] >= HUE_UPPER).int().sum(dim=[1,2,0])
             nh_partial2 = (inputs[:,0,:,:] >= HUE_LOWER).int().sum(dim=[1,2,0])
-            nh_sum += nh_partial1 + nh_partial2
-            nv_sum += (inputs[:,2,:,:] >= VALUE).int().sum(dim=[1,2,0])
+            nh_sum += (nh_partial1 + nh_partial2) / inputs.size(0)
+            nv_sum += (inputs[:,2,:,:] >= VALUE).int().sum(dim=[1,2,0]) / inputs.size(0)
 
     return (nh_sum/dataset_size, nv_sum/dataset_size)
 

@@ -5,15 +5,18 @@ import argparse
 from ultralytics import YOLO
 from PIL import Image
 
-MIN_CONF_DAY = 0.65
-MIN_CONF_NIGHT = 0.4
+#MIN_CONF_DAY = 0.7
+#MIN_CONF_NIGHT = 0.6
+IOU = 0.8
+MAX_DET = 3
+MIN_SIZE = 56
 
-def iterative_detection(root_dir):
+def iterative_detection(device, model, minimal_conf, data_dir):
     for filename in os.listdir(root_dir):      
         
-        if os.path.isfile(f"{root_dir}/{filename}"):
+        if os.path.isfile(f"{data_dir}/{filename}"):
             
-            results = model.predict(f"{root_dir}/{filename}", imgsz=640, device=1, classes=[2,5,7])
+            results = model.predict(f"{data_dir}/{filename}", imgsz=640, device=device, conf=minimal_conf, classes=[2,5,7], iou=IOU, max_det=MAX_DET)
     
             for i, r in enumerate(results):
                 print(r.boxes.data.tolist())
@@ -29,52 +32,45 @@ def iterative_detection(root_dir):
         if lock == '0':
             break
 
-def create_dataset(device, model, reference_file, root_dir, output_dir):
+def create_dataset(device, model, minimal_conf, scale, in_dir, out_dir):
     
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
+    #if not os.path.exists(out_dir):
+    #    os.mkdir(out_dir)
 
-    with open(reference_file) as file:
-        csv_reader = csv.reader(file, delimiter=',')
+    for filename in os.listdir(in_dir):  
+            
+        results = model.predict(f"{in_dir}/{filename}", imgsz=640, device=device, conf=minimal_conf, augment=True, classes=[2,5,7], iou=IOU, max_det=MAX_DET)
+        img = Image.open(f"{in_dir}/{filename}")
 
-        # row   := [image_filename,label]
-        # label := 0 -> day; 1 -> night; 2 -> dawn/dusk; 3 -> undefined 
-        for row in csv_reader:
-            
-            minimal_conf = MIN_CONF_DAY
-            
-            if row[1] == 1 or row[1] == 2:
-                minimal_conf = MIN_CONF_NIGHT    
-            
-            elif row[1] == 3:
-                continue
-            
-            results = model.predict(f"{root_dir}/{row[0]}", imgsz=640, device=device, augment=True, classes=[2,5,7])
-            
-            img = Image.open(f"{root_dir}/{row[0]}")
-
-            for i, boxes in enumerate(results[0].boxes):
-                for box in boxes:
-                    coords = tuple(map(int, box.xyxy[0].cpu()))
+        for i, boxes in enumerate(results[0].boxes):
+            for box in boxes:
+                coords = tuple(map(int, box.xyxy[0].cpu()))
+                width, height = abs(coords[0] - coords[2]), abs(coords[1] - coords[3])
+                
+                if width >= MIN_SIZE and height >= MIN_SIZE:
+                
                     cropped_image = img.crop(coords)
-                    cropped_image.save(f"{output_dir}/{row[0].split('.')[0]}-{i}_{row[1]}.jpg")
-                    #cropped_image.show()                    
+                    cropped_image.resize(scale, Image.BICUBIC)
+                    cropped_image.save(f"{out_dir}/{filename}")
 
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--device")
-    parser.add_argument("--reference_file")
-    parser.add_argument("--root_dir")
-    parser.add_argument("--output_dir")
+    parser.add_argument("--in_dir")
+    parser.add_argument("--out_dir")
+    parser.add_argument("--min_conf", type=float)
+    parser.add_argument("--scale", type=int)
     args = parser.parse_args()
     
     device = args.device
-    reference_file = args.reference_file
-    root_dir = args.root_dir
-    output_dir = args.output_dir
+    in_dir = args.in_dir
+    out_dir = args.out_dir
+    min_conf = args.min_conf
+    scale = (args.scale, args.scale)
     
     # Load a pretrained YOLOv8n model
     model = YOLO('yolov8n.pt')
     
-    create_dataset(device, model, reference_file, root_dir, output_dir)
+    #iterative_detection(device, model, root_dir)
+    create_dataset(device, model, min_conf, scale, in_dir, out_dir)
