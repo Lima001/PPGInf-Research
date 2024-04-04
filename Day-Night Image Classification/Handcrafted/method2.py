@@ -56,7 +56,7 @@ def classify_dataset(device, dataloaders, class_names, dataset_sizes, threshold_
                 preds = ((nh_tensor > threshold_h).bool() & (nv_tensor < threshold_v).bool()).int()
 
                 if phase == "val":
-                    confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
+                    confusion_matrix += multiclass_confusion_matrix(preds, targets, len(class_names)).to(device)
 
                 running_corrects += torch.sum(preds == targets)
 

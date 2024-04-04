@@ -1,5 +1,4 @@
 import os
-import sys
 import argparse
 import random
 import numpy as np
@@ -17,10 +16,10 @@ from tqdm import tqdm
 
 os.environ["WDM_PROGRESS_BAR"] = "0"
 
-EPOCHS = 5
-BATCH_SIZE = 4
-LR = 1e-4
-STEP_SIZE = 2
+EPOCHS = 20
+BATCH_SIZE = 32
+LR = 1e-3
+STEP_SIZE = 5
 GAMMA = 0.1
 
 class Transform():
@@ -128,7 +127,7 @@ def train_model(device, model, dataloaders, optimizer, loss_function, epochs, cl
                             loss.backward()
                             optimizer.step()
                         else:
-                            confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
+                            confusion_matrix += multiclass_confusion_matrix(preds, targets, len(class_names)).to(device)
                             
                     # statistics
                     running_loss += loss.item() * inputs.size(0)
@@ -176,20 +175,17 @@ def evaluate_model(device, model, dataloader, class_names, dataset_size):
     with tqdm(dataloader, unit="batch") as t:
     
         for inputs, targets in t:
-            tepoch.set_description(f"evaluating")
+            t.set_description("evaluating")
         
             # Move data to GPU.
             one_hot_targets = nn.functional.one_hot(targets, num_classes=len(class_names)).float()
             inputs, targets, one_hot_targets = inputs.to(device), targets.to(device), one_hot_targets.to(device)
-        
-            # Zero the parameter gradients.
-            optimizer.zero_grad()
 
             with torch.set_grad_enabled(False):
                 outputs = model(inputs)
                 _, preds = torch.max(outputs, 1)
                 loss = loss_function(outputs, one_hot_targets)
-                confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
+                confusion_matrix += multiclass_confusion_matrix(preds, targets, len(class_names)).to(device)
                     
             # statistics
             running_loss += loss.item() * inputs.size(0)
@@ -206,7 +202,7 @@ def evaluate_model(device, model, dataloader, class_names, dataset_size):
                 print(int(confusion_matrix[i][j]), end="\t")
             print()
 
-
+# Function was not tested
 def visualize_model(device, model, dataloader, num_images=6):
 
     model.eval()
@@ -226,11 +222,12 @@ def visualize_model(device, model, dataloader, num_images=6):
                 ax = plt.subplot(num_images//2, 2, images_so_far)
                 ax.axis('off')
                 ax.set_title(f'predicted: {class_names[preds[j]]}')
-                imshow(inputs.cpu().data[j])
+                plt.imshow(inputs.cpu().data[j])
 
                 if images_so_far == num_images:
                     return
 
+# Function was not tested
 def model_prediction(device, model, data_transform, img_path, graphics=False):
     
     model.eval()
@@ -248,7 +245,7 @@ def model_prediction(device, model, data_transform, img_path, graphics=False):
             ax = plt.subplot(2,2,1)
             ax.axis('off')
             ax.set_title(f'Predicted: {class_names[preds[0]]}')
-            imshow(img.cpu().data[0])
+            plt.imshow(img.cpu().data[0])
 
     return preds[0]
 
@@ -273,11 +270,15 @@ if __name__ == "__main__":
     
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
 
+    resize_dim = 224
+    if args.model == "inception_v3":
+        resize_dim = 299    
+
     # Data augmentation and normalization for training
     # Just normalization for validation
     data_transforms = {
         'train': Transform(Compose([
-            Resize(224,224),
+            Resize(resize_dim,resize_dim),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             Rotate(limit=15, p=0.5),
             HorizontalFlip(p=0.5),
@@ -286,7 +287,7 @@ if __name__ == "__main__":
             ToTensorV2()
         ])),
         'val': Transform(Compose([
-            Resize(224,224),
+            Resize(resize_dim,resize_dim),
             Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ])),

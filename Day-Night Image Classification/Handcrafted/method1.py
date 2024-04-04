@@ -38,7 +38,7 @@ def classify_dataset(device, dataloaders, class_names, dataset_sizes, threshold)
                 preds = (inputs.mean(dim=[2,3], dtype=torch.float)[:,2] < threshold).int()
                 
                 if phase == "val":
-                    confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
+                    confusion_matrix += multiclass_confusion_matrix(preds, targets, len(class_names)).to(device)
 
                 running_corrects += torch.sum(preds == targets)
 

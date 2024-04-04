@@ -32,7 +32,7 @@ def classify_dataset(device, dataloaders, class_names, dataset_sizes):
                 preds = (night_pixels > day_pixels).int()
 
                 if phase == "val":
-                    confusion_matrix += multiclass_confusion_matrix(targets, preds, len(class_names)).to(device)
+                    confusion_matrix += multiclass_confusion_matrix(preds, targets, len(class_names)).to(device)
 
                 running_corrects += torch.sum(preds == targets)
 
