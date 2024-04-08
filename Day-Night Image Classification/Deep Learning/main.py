@@ -6,21 +6,23 @@ import torch
 import torch.nn as nn
 import torchvision
 import matplotlib.pyplot as plt
+from torcheval.metrics import *
 from torch.utils.data import DataLoader
-from torcheval.metrics.functional import multiclass_confusion_matrix
 from albumentations import *
 from albumentations.pytorch import ToTensorV2
 from tempfile import TemporaryDirectory
 from PIL import Image
 from tqdm import tqdm
 
+from earlystop import *
+
 os.environ["WDM_PROGRESS_BAR"] = "0"
 
-EPOCHS = 20
-BATCH_SIZE = 32
-LR = 1e-3
-STEP_SIZE = 5
-GAMMA = 0.1
+EPOCHS = 50
+BATCH_SIZE = 4
+LR = 1e-4
+#STEP_SIZE = 5
+#GAMMA = 0.1
 
 class Transform():
     
@@ -81,12 +83,46 @@ def get_inception_v3():
 
     return model
 
-def train_model(device, model, dataloaders, optimizer, loss_function, epochs, class_names, dataset_sizes):
+def print_metrics(phase, epoch, acc, loss, confusion_matrix, precision, recall, f1_score, auroc, num_classes):
+    
+    print(f"{phase} - epoch {epoch} - acc: {acc.compute()} - loss: {loss}")
+    
+    if phase == "val":
+        
+        print(f"{phase} - epoch {epoch} - precision: {precision.compute()}")
+        print(f"{phase} - epoch {epoch} - recall: {recall.compute()}")
+        print(f"{phase} - epoch {epoch} - f1_score: {f1_score.compute()}")
+        print(f"{phase} - epoch {epoch} - auroc: {auroc.compute()}")
+        print(f"{phase} - epoch {epoch} - confusion_matrix:\n{confusion_matrix.compute().int()}")
+    
+    print()
 
+    acc.reset()
+    confusion_matrix.reset()
+    precision.reset()
+    recall.reset()
+    f1_score.reset()
+    auroc.reset()
+    
+
+def train_model(device, model, dataloaders, optimizer, loss_function, early_stop, epochs, class_names, dataset_sizes):
+    
+    stop = False
     torch.cuda.empty_cache()
     
     # Transfer model to GPU
     model.to(device)
+    
+    task = "multiclass"
+    if len(class_names) == 2:
+        task = "binary"
+    
+    acc = MulticlassAccuracy(num_classes=len(class_names), device=device)
+    confusion_matrix = MulticlassConfusionMatrix(num_classes=len(class_names), normalize=None, device=device)
+    precision = MulticlassPrecision(num_classes=len(class_names), device=device, average=None)
+    recall = MulticlassRecall(num_classes=len(class_names), device=device, average=None)
+    f1_score = MulticlassF1Score(num_classes=len(class_names), device=device, average=None)
+    auroc = MulticlassAUROC(num_classes=len(class_names), device=device, average=None)
     
     best_model_params_path = os.path.join(args.save, f'{args.model}_best_params.pt')
     torch.save(model.state_dict(), best_model_params_path)
@@ -100,11 +136,9 @@ def train_model(device, model, dataloaders, optimizer, loss_function, epochs, cl
                 model.train()  # Set model to training mode
             else:
                 model.eval()   # Set model to evaluate mode
-                confusion_matrix = torch.zeros((len(class_names), len(class_names))).to(device)
 
             running_loss = 0.0
-            running_corrects = 0
-
+            
             with tqdm(dataloaders[phase], unit="batch") as tepoch:
             
                 for inputs, targets in tepoch:
@@ -119,135 +153,48 @@ def train_model(device, model, dataloaders, optimizer, loss_function, epochs, cl
 
                     with torch.set_grad_enabled(phase == 'train'):
                         outputs = model(inputs)
-                        _, preds = torch.max(outputs, 1)
+                        #_, preds = torch.max(outputs, 1)
                         loss = loss_function(outputs, one_hot_targets)
-
+                        
                         # backward + optimize only if in training phase
                         if phase == 'train':
                             loss.backward()
                             optimizer.step()
-                        else:
-                            confusion_matrix += multiclass_confusion_matrix(preds, targets, len(class_names)).to(device)
+                        
+                        acc.update(outputs, targets)
+                        confusion_matrix.update(outputs, targets)
+                        precision.update(outputs, targets)
+                        recall.update(outputs, targets)
+                        f1_score.update(outputs, targets)
+                        auroc.update(outputs, targets)
                             
                     # statistics
                     running_loss += loss.item() * inputs.size(0)
-                    running_corrects += torch.sum(preds == targets)
                 
-                if phase == 'train':
-                    scheduler.step()
-
                 epoch_loss = running_loss / dataset_sizes[phase]
-                epoch_acc = running_corrects.double() / dataset_sizes[phase]
-
-                print(f'{phase} epoch {epoch} - Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
-
+                
                 # deep copy the model
                 if phase == 'val':
                         
-                    if epoch_acc > best_acc:
-                        best_acc = epoch_acc
-                        torch.save(model.state_dict(), best_model_params_path)                    
+                    print(f"lr: {optimizer.param_groups[0]['lr']}")
+                    
+                    if float(acc.compute()) > best_acc:
+                        best_acc = float(acc.compute())
+                        torch.save(model.state_dict(), best_model_params_path)
+                        
+                    stop = early_stop.check(float(acc.compute()))
+                    scheduler.step(epoch_loss)
 
-
-                    print("Confusion matrix (raw counts)")
-                    for i in range(len(class_names)):
-                        for j in range(len(class_names)):
-                            print(int(confusion_matrix[i][j]), end="\t")
-                        print()
-        
-    print(f'Best val Acc: {best_acc:4f}')    
+                print_metrics(phase, epoch, acc, epoch_loss, confusion_matrix, precision, recall, f1_score, auroc, len(class_names))
+                
+        if stop:
+            print(f"Early stopped at epoch {epoch}")
+            break
+                    
+    print(f'Best val acc: {best_acc:4f}')    
     model.load_state_dict(torch.load(best_model_params_path))
     
     return model            
-
-def evaluate_model(device, model, dataloader, class_names, dataset_size):
-
-    torch.cuda.empty_cache()
-    
-    # Transfer model to GPU
-    model.to(device)
-    model.eval()   
-    
-    confusion_matrix = torch.zeros((len(class_names), len(class_names))).to(device)
-    running_loss = 0.0
-    running_corrects = 0
-
-    with tqdm(dataloader, unit="batch") as t:
-    
-        for inputs, targets in t:
-            t.set_description("evaluating")
-        
-            # Move data to GPU.
-            one_hot_targets = nn.functional.one_hot(targets, num_classes=len(class_names)).float()
-            inputs, targets, one_hot_targets = inputs.to(device), targets.to(device), one_hot_targets.to(device)
-
-            with torch.set_grad_enabled(False):
-                outputs = model(inputs)
-                _, preds = torch.max(outputs, 1)
-                loss = loss_function(outputs, one_hot_targets)
-                confusion_matrix += multiclass_confusion_matrix(preds, targets, len(class_names)).to(device)
-                    
-            # statistics
-            running_loss += loss.item() * inputs.size(0)
-            running_corrects += torch.sum(preds == targets)
-
-        eval_loss = running_loss / dataset_size
-        eval_corrects = running_corrects.double() / dataset_size
-
-        print(f'Loss: {eval_loss:.4f} Acc: {eval_corrects:.4f}')
-                 
-        print("Confusion matrix (raw counts)")
-        for i in range(len(class_names)):
-            for j in range(len(class_names)):
-                print(int(confusion_matrix[i][j]), end="\t")
-            print()
-
-# Function was not tested
-def visualize_model(device, model, dataloader, num_images=6):
-
-    model.eval()
-    images_so_far = 0
-    fig = plt.figure()
-
-    with torch.no_grad():
-        for i, (inputs, labels) in enumerate(dataloader):
-            inputs = inputs.to(device)
-            labels = labels.to(device)
-
-            outputs = model(inputs)
-            _, preds = torch.max(outputs, 1)
-
-            for j in range(inputs.size()[0]):
-                images_so_far += 1
-                ax = plt.subplot(num_images//2, 2, images_so_far)
-                ax.axis('off')
-                ax.set_title(f'predicted: {class_names[preds[j]]}')
-                plt.imshow(inputs.cpu().data[j])
-
-                if images_so_far == num_images:
-                    return
-
-# Function was not tested
-def model_prediction(device, model, data_transform, img_path, graphics=False):
-    
-    model.eval()
-
-    img = Image.open(img_path)
-    img = data_transforms(img)
-    img = img.unsqueeze(0)
-    img = img.to(device)
-
-    with torch.no_grad():
-        outputs = model(img)
-        _, preds = torch.max(outputs, 1)
-
-        if graphics:
-            ax = plt.subplot(2,2,1)
-            ax.axis('off')
-            ax.set_title(f'Predicted: {class_names[preds[0]]}')
-            plt.imshow(img.cpu().data[0])
-
-    return preds[0]
 
 if __name__ == "__main__":
     
@@ -313,7 +260,8 @@ if __name__ == "__main__":
             x: len(image_datasets[x]) 
             for x in ['train', 'val']
     }
-    
+    #print(dataset_sizes)
+
     class_names = image_datasets['train'].classes
     #print(class_names)
 
@@ -323,9 +271,13 @@ if __name__ == "__main__":
         model = get_resnet18()
     elif args.model == "inception_v3":
         model = get_inception_v3()
+    elif args.model == "customCNN":
+        model = get_customCNN()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     loss_function = nn.CrossEntropyLoss()
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
+    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
+    early_stop = EarlyStop()
 
-    train_model(device, model, dataloaders, optimizer, loss_function, EPOCHS, class_names, dataset_sizes)
+    train_model(device, model, dataloaders, optimizer, loss_function, early_stop, EPOCHS, class_names, dataset_sizes)
