@@ -113,10 +113,6 @@ def train_model(device, model, dataloaders, optimizer, loss_function, early_stop
     # Transfer model to GPU
     model.to(device)
     
-    task = "multiclass"
-    if len(class_names) == 2:
-        task = "binary"
-    
     acc = MulticlassAccuracy(num_classes=len(class_names), device=device)
     confusion_matrix = MulticlassConfusionMatrix(num_classes=len(class_names), normalize=None, device=device)
     precision = MulticlassPrecision(num_classes=len(class_names), device=device, average=None)
@@ -127,6 +123,7 @@ def train_model(device, model, dataloaders, optimizer, loss_function, early_stop
     best_model_params_path = os.path.join(args.save, f'{args.model}_best_params.pt')
     torch.save(model.state_dict(), best_model_params_path)
     best_acc = 0.0
+    best_epoch = 0
         
     # Train the model. In PyTorch we have to implement the training loop ourselves.
     for epoch in range(1, epochs+1):
@@ -180,18 +177,19 @@ def train_model(device, model, dataloaders, optimizer, loss_function, early_stop
                     
                     if float(acc.compute()) > best_acc:
                         best_acc = float(acc.compute())
+                        best_epoch = epoch
                         torch.save(model.state_dict(), best_model_params_path)
                         
-                    stop = early_stop.check(float(acc.compute()))
+                    stop = early_stop.check(epoch_loss)
                     scheduler.step(epoch_loss)
 
                 print_metrics(phase, epoch, acc, epoch_loss, confusion_matrix, precision, recall, f1_score, auroc, len(class_names))
                 
         if stop:
-            print(f"Early stopped at epoch {epoch}")
+            print(f"early stopped at epoch: {epoch}")
             break
                     
-    print(f'Best val acc: {best_acc:4f}')    
+    print(f'best val acc: {best_acc:4f} - achieved on epoch: {best_epoch}')    
     model.load_state_dict(torch.load(best_model_params_path))
     
     return model            
@@ -271,13 +269,11 @@ if __name__ == "__main__":
         model = get_resnet18()
     elif args.model == "inception_v3":
         model = get_inception_v3()
-    elif args.model == "customCNN":
-        model = get_customCNN()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     loss_function = nn.CrossEntropyLoss()
     #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, threshold=0.001)
     early_stop = EarlyStop()
 
     train_model(device, model, dataloaders, optimizer, loss_function, early_stop, EPOCHS, class_names, dataset_sizes)
