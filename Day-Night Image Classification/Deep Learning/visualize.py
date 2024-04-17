@@ -131,7 +131,7 @@ def visualize_feature_maps(model, image, layer_idx=0, save=None):
     get_kernels(model, model_weights, conv_layers, counter)
     
     results = [conv_layers[0](image)]
-    for i in range(1, layer_idx):
+    for i in range(1, layer_idx+1):
         results.append(conv_layers[i](results[-1]))
     
     data = results[layer_idx][0, :, :, :].data  
