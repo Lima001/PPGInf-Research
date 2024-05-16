@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from numpy import inf
-
 
 class EarlyStop():
     
@@ -20,6 +17,5 @@ class EarlyStop():
 
             return False
             
-        
         self.counter += 1
         return self.counter > self.patience

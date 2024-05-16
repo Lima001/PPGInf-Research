@@ -22,4 +22,5 @@ Although the studied methods, especially the Deep Learning ones, may perform wel
 - Code is optimized to be executed on a single GPU;
 - Datasets are not included;
 - Datasets are expected to be formated following the ImageFolder (Pytorch) arrangement; 
-- Deep Learning Models' parameters are not included.
+- Deep Learning Models' parameters are not included;
+- Deep Learning code is avaliable under folder "Image Classification"; the code was improved aiming generalization for arbitrary image classification task.

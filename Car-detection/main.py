@@ -1,18 +1,17 @@
 import os
 import csv
 import argparse
-
+import torch
 from ultralytics import YOLO
 from PIL import Image
 
-#MIN_CONF_DAY = 0.7
-#MIN_CONF_NIGHT = 0.6
 IOU = 0.8
 MAX_DET = 3
 MIN_SIZE = 56
 
 def iterative_detection(device, model, minimal_conf, data_dir):
-    for filename in os.listdir(root_dir):      
+    
+    for filename in os.listdir(data_dir):      
         
         if os.path.isfile(f"{data_dir}/{filename}"):
             
@@ -34,9 +33,6 @@ def iterative_detection(device, model, minimal_conf, data_dir):
 
 def create_dataset(device, model, minimal_conf, scale, in_dir, out_dir):
     
-    #if not os.path.exists(out_dir):
-    #    os.mkdir(out_dir)
-
     for filename in os.listdir(in_dir):  
             
         results = model.predict(f"{in_dir}/{filename}", imgsz=640, device=device, conf=minimal_conf, augment=True, classes=[2,5,7], iou=IOU, max_det=MAX_DET)
@@ -50,27 +46,24 @@ def create_dataset(device, model, minimal_conf, scale, in_dir, out_dir):
                 if width >= MIN_SIZE and height >= MIN_SIZE:
                 
                     cropped_image = img.crop(coords)
-                    cropped_image.resize(scale, Image.BICUBIC)
+                    cropped_image = cropped_image.resize(scale, Image.BICUBIC)
                     cropped_image.save(f"{out_dir}/{filename}")
 
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--device")
-    parser.add_argument("--in_dir")
-    parser.add_argument("--out_dir")
-    parser.add_argument("--min_conf", type=float)
+    parser.add_argument("--indir")
+    parser.add_argument("--outdir")
+    parser.add_argument("--minimal_conf", type=float)
     parser.add_argument("--scale", type=int)
     args = parser.parse_args()
     
-    device = args.device
-    in_dir = args.in_dir
-    out_dir = args.out_dir
-    min_conf = args.min_conf
+    device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
     scale = (args.scale, args.scale)
     
     # Load a pretrained YOLOv8n model
     model = YOLO('yolov8n.pt')
     
-    #iterative_detection(device, model, root_dir)
-    create_dataset(device, model, min_conf, scale, in_dir, out_dir)
+    #iterative_detection(device, model, args.minimal_conf, args.indir)
+    create_dataset(device, model, args.minimal_conf, scale, args.indir, args.outdir)
