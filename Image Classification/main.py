@@ -97,7 +97,7 @@ def train_model(device, model, dataloaders, optimizer, loss_function, early_stop
             #    }, os.path.join(args.save, f'{args.model}_checkpoint_e{epoch}.pt'))
             #break
                     
-    print(f'best val acc: {best_acc:4f} - achieved on epoch: {best_epoch[0]}')
+    print(f'best val acc: {best_acc:4f} - achieved on epoch: {best_epoch]')
     #model.load_state_dict(torch.load(best_model_params_path))
     #return model            
 
