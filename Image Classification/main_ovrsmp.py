@@ -1,10 +1,8 @@
-# This script is designed to train a deep learning model for image classification using PyTorch. 
-# It includes functionality for data augmentation, early stopping, and learning rate scheduling. 
-# The user can specify various parameters through command-line arguments, such as the device 
-# (CPU/GPU), model type, data directory, and training hyperparameters. The script trains the 
-# model using a specified optimizer and loss function, tracks accuracy, and saves the best-performing 
-# model to disk. Early stopping is employed to prevent overfitting if the validation loss stops 
-# improving for a specified number of epochs.
+# Similar to main.py. However, this program is intended for fine-grained classification tasks 
+# with an emphasis on handling imbalanced datasets. Oversammpling is done by increasing the
+# dataloader frequency load for the minority classes.
+
+# In a near future, main.py and main_ovrsmp.py will be merged together
 
 import os
 import random
@@ -149,9 +147,9 @@ if __name__ == "__main__":
     # Uncomment to set PyTorch as single thread
     #torch.set_num_threads(1)
     
-    # Argument parser for command-line arguments
+    # Argument parser for command-line arguments.
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device")                 # Specify device (e.g., 'cuda:0' or 'cpu')
+    parser.add_argument("--device")                 # Specify device (e.g., 'cuda:0' or 'cpu').
     parser.add_argument("--root")                   # Root directory for the dataset (where train/test/val folders are)
     parser.add_argument("--model")                  # Model architecture to use (see models.py for a list of supported models)
     parser.add_argument("--save")                   # Directory to save the best model
@@ -202,38 +200,54 @@ if __name__ == "__main__":
             Normalize(mean=mean, std=std),
             ToTensorV2()
         ])),
-    }    
+    } 
     
-    # Load training and validation datasets with the defined transforms
+    # Load the datasets with the defined transformations
     image_datasets = {
             x: torchvision.datasets.ImageFolder(os.path.join(args.root, x), 
-                                                data_transforms[x], 
+                                                data_transforms[x],
                                                 loader=Transform.open_img) 
             
             for x in ['train', 'val']
     }
+   
+
+    # Get class names and number of classes
+    class_names = image_datasets['train'].classes
+    n_classes = len(class_names)
+
+    # Calculate class weights to handle class imbalance
+    samples_per_class = torch.zeros(n_classes, dtype=torch.long)
     
-    # Create data loaders for training and validation datasets
+    for _, target in image_datasets['train']:
+        samples_per_class[target] += 1
+
+    # The higher the class presente in the dataset, the lower is its loading frequence during training
+    class_weights = 1/samples_per_class
+    sample_weights = [class_weights[i] for i in image_datasets["train"].targets]
+
+    # Create data loaders with weighted sampling for the training set
     dataloaders = {
-            x: torch.utils.data.DataLoader( image_datasets[x], 
-                                            batch_size=args.batch_size, 
-                                            shuffle=True, 
-                                            num_workers=2,
-                                            pin_memory=True) 
-            for x in ['train', 'val']
+            "train": torch.utils.data.DataLoader(image_datasets["train"], 
+                                                 batch_size=args.batch_size, 
+                                                 shuffle=False, 
+                                                 num_workers=2,
+                                                 pin_memory=True,
+                                                 sampler=WeightedRandomSampler(weights=sample_weights, num_samples=len(image_datasets["train"]), replacement=True)), 
+            
+            "val": torch.utils.data.DataLoader(image_datasets["val"], 
+                                                 batch_size=args.batch_size, 
+                                                 shuffle=True, 
+                                                 num_workers=2,
+                                                 pin_memory=True)
     }
     
-    # Get the number of samples in each dataset
+    # Get dataset sizes
     dataset_sizes = {
             x: len(image_datasets[x]) 
             for x in ['train', 'val']
     }
     
-    # Get the list of class names and the number of classes
-    class_names = image_datasets['train'].classes
-    n_classes = len(class_names)
-
-    # Initialize the model (see model.py)
     model = get_model(args.model, n_classes, args.pretrained)
 
     # Set up optimizer, loss function, learning rate scheduler, and early stopping mechanism

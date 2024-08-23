@@ -1,4 +1,6 @@
-# Original implementation Reference: https://github.com/revidee/pytorch-pyramid-pooling/tree/master
+# Original implementation form: https://github.com/revidee/pytorch-pyramid-pooling/tree/master
+# This Module implements Spatial Pyramid Pooling (SPP) and Temporal Pyramid Pooling (TPP)
+
 import math
 import torch
 import torch.nn as nn
@@ -87,8 +89,6 @@ class PyramidPooling(nn.Module):
         num_sample = previous_conv.size(0)
         previous_conv_size = [int(previous_conv.size(2)), int(previous_conv.size(3))]
         for i in range(len(out_pool_size)):
-            # print(previous_conv_size)
-            #
             h_kernel = previous_conv_size[0]
             w_kernel = int(math.ceil(previous_conv_size[1] / out_pool_size[i]))
             w_pad1 = int(math.floor((w_kernel * out_pool_size[i] - previous_conv_size[1]) / 2))
