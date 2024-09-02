@@ -1,10 +1,3 @@
-# This script evaluates a deep learning model by saving symbolic links to images in a confusion matrix directory. 
-# Each link represents an image classified into a specific class, along with its predicted class. 
-# This can be useful for visualizing classification errors.
-
-# Important: 
-# The output directory in confusion matrix like structure is expected to exist before the script execution!
-
 import os
 import argparse
 import torch
@@ -16,7 +9,13 @@ from models import *
 from dataset import *
 from transform import *
 
-def save_confusion_matrix(device, model, dataloader, save):
+# Prediction directory name
+OUTPUT = "Predicts"
+
+def save_predicts(device, model, dataloader):
+
+    # Define the absolute path to predictions directory root
+    abs_path = os.path.join(os.path.abspath("./"), OUTPUT)
 
     # Clear GPU cache to ensure there is no leftover data
     torch.cuda.empty_cache()
@@ -43,8 +42,8 @@ def save_confusion_matrix(device, model, dataloader, save):
                 
                 # Iterate over each output prediction
                 for i in range(outputs.size(dim=0)):
-                    # Define where to save the image inside the confusion matrix directory
-                    aux = os.path.join(save, f"{targets[i]}-{int(preds[i].cpu())}")
+                    # Define where to save the image
+                    aux = os.path.join(abs_path, f"{int(preds[i].cpu())}", f"{paths[i].split('/')[-1]}")
                     
                     # As I am using Linux, to save space the confusion matrix directory is composed of symbolic links
                     os.system(f"ln -s {paths[i]} {aux}")
@@ -61,10 +60,16 @@ if __name__ == "__main__":
     parser.add_argument("--model")                      # Model architecture to use (see models.py for a list of supported models)
     parser.add_argument("--config")                     # Model weights that will be loaded before the metric evaluation step
     parser.add_argument("--batch_size", type=int)       # Batch size for data loaders
-    parser.add_argument("--pretrained", default=False, action=argparse.BooleanOptionalAction) # Whether to use a pretrained model from PyTorch (ImageNet)
-    parser.add_argument("--subset")                     # Subset (train/val/test) to load and calculate the metrics
-    parser.add_argument("--save")                       # Confusion matrix directory root path (where the images will be stored)
-    args = parser.parse_args()  
+    parser.add_argument("--n_class", type=int)       
+    parser.add_argument("--pretrained", default=False, action=argparse.BooleanOptionalAction) # Whether to normalized based on ImageNet mean and std
+    args = parser.parse_args()
+
+    abs_path = os.path.join(os.path.abspath("./"), OUTPUT)
+    if not os.path.exists(abs_path):
+        os.makedirs(abs_path)
+    else:
+        print(f"{OUTPUT} directory already exists. Please remove it (or move it to another path)")
+        exit(0)
     
    # Determine device to use (GPU or CPU)
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
@@ -79,33 +84,15 @@ if __name__ == "__main__":
         exit(0)
 
     # Define data augmentation and normalization transforms
-    data_transforms = {
-        'train': Transform(Compose([
-            Resize(224,224),
-            Affine(scale=(0.9,1.3), rotate=(-360,360), shear=(-30,30), p=0.5),
-            RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.3),
-            AdvancedBlur(p=0.4),
-            CoarseDropout(max_holes=1, max_height=72, max_width=72, min_holes=1, min_height=72, min_width=72, fill_value="random", p=0.25),
-            Normalize(mean=mean, std=std),
-            ToTensorV2()
-        ])),
-        'val': Transform(Compose([
-            Resize(224,224),
-            Normalize(mean=mean, std=std),
-            ToTensorV2()
-        ])),
-        'test': Transform(Compose([
-            Resize(224,224),
-            Normalize(mean=mean, std=std),
-            ToTensorV2()
-        ])),
-    }
+    data_transforms = Transform(Compose([
+                            Resize(224,224),
+                            Normalize(mean=mean, std=std),
+                            ToTensorV2()
+    ]))
     
-    # Load dataset specified subset
-    # Note: The ImageFolderWithPaths class is an extension of torchvision.datasets.ImageFolder
-    #       See datasets.py for more details.
+    # Load image set
     image_dataset = ImageFolderWithPaths(args.root, 
-                                         data_transforms[args.subset], 
+                                         data_transforms, 
                                          loader=Transform.open_img)
 
     # Create data loaders for the subset
@@ -117,11 +104,19 @@ if __name__ == "__main__":
     
     # Get subset summary info
     dataset_size = len(image_dataset) 
-    class_names = image_dataset.classes
-    n_class = len(class_names)
+
+    # Create the subdirectories on OUTPUT directory
+    for i in range(args.n_class):
+        abs_path = os.path.join(os.path.abspath("./"), OUTPUT, str(i))
+        
+        if not os.path.exists(abs_path):
+            os.makedirs(abs_path)
+        else:
+            print(f"Directory already exists!")
+            exit(0)
 
     # Initialize the model (see model.py)
-    model = get_model(args.model, n_class, args.pretrained)
+    model = get_model(args.model, args.n_class, args.pretrained)
     model.load_state_dict(torch.load(args.config, map_location=device))
         
-    save_confusion_matrix(device, model, dataloader, args.save)
+    save_predicts(device, model, dataloader)

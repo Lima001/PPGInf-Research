@@ -76,6 +76,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int)       # Batch size for data loaders
     parser.add_argument("--pretrained", default=False, action=argparse.BooleanOptionalAction) # Whether to use a pretrained model from PyTorch (ImageNet)
     parser.add_argument("--subset")                     # Subset (train/val/test) to load and calculate the metrics
+     parser.add_argument("--save")                       # Confusion matrix directory root path (where the images will be stored)
     args = parser.parse_args()  
     
    # Determine device to use (GPU or CPU)
