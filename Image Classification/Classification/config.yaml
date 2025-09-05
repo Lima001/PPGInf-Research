@@ -1,0 +1,122 @@
+# ===================================================================
+# COMPREHENSIVE CONFIGURATION FILE
+# This file contains settings for all scripts in the project,
+# including standard training, GradNorm training, and testing.
+# ===================================================================
+
+# --- 1. Data Configuration (Used by ALL scripts) ---
+data:
+  # Root path to the directory containing fold subdirectories (e.g., ./data/splits/0/train.txt)
+  csv_path: './data/splits'
+  
+  # Path to the directory where all images are stored
+  img_dir: './data/images'
+  
+  # Dictionary mapping task names to their number of classes.
+  # This structure is critical for the model heads.
+  task_classes:
+    vehicle_type: 14
+    vehicle_make: 26
+    vehicle_model: 136
+
+# --- 2. Model Configuration (Used by ALL scripts) ---
+model:
+  # Name of the model architecture from `lib/model.py`.
+  # Options: "YOLO", "ResNet50", "ViT", "EfficientNetV2", "MobileNetV3", etc.
+  name: 'ResNet50'
+  
+  # Whether to freeze the backbone weights (only relevant during training).
+  freeze_backbone: false
+
+  # Optional: For models like YOLO that have variants, you can pass special
+  # arguments that its specific class __init__ will accept.
+  # yolo_variant: 'yolov8s-cls.pt'
+
+# --- 3. Training Configuration (Used by train.py and train_gradnorm_kl.py) ---
+training:
+  # General training settings
+  device: 'cuda:0'
+  save_dir: './runs/standard_training'
+  epochs: 100
+  batch_size: 32
+  num_workers: 4
+  primary_metric: 'macro_f1' # Metric to track for the 'best' checkpoint
+
+  # Optimizer settings
+  optimizer:
+    optimizer_name: 'adamw' # adamw, sgd, etc.
+    lr: 0.001
+    weight_decay: 0.01
+    kwargs:
+      betas: [0.9, 0.999]
+  
+  # Scheduler settings
+  scheduler:
+    policy: 'cosine' # cosine, reducelronplateau, etc.
+    kwargs:
+      lrf: 0.01
+
+  # Loss function settings (for the base classification loss)
+  loss:
+    name: 'cross_entropy'
+    # Optional: For label smoothing
+    kwargs:
+      label_smoothing: 0.1
+    # Weights for each task in the loss function
+    task_weights:
+      vehicle_type: 1.0
+      vehicle_make: 1.0
+      vehicle_model: 1.5
+
+# --- 4. Hierarchy Loss Config (ONLY for train_gradnorm_kl.py & detect_inconsistencies.py) ---
+hierarchy:
+  # Path to the JSON file defining task relationships (e.g., type -> make -> model)
+  json_path: './lib/hierarchy.json'
+  
+  # The weight multiplier for the KL-divergence consistency loss term
+  weight: 0.5
+
+# --- 5. GradNorm Config (ONLY for train_gradnorm_kl.py) ---
+gradnorm:
+  # Learning rate for the separate optimizer that updates the task weights
+  lr: 0.01
+  
+  # The 'restoring force' hyperparameter.
+  alpha: 1.5
+
+# --- 6. Testing Config (ONLY for test.py) ---
+testing:
+  device: 'cuda:0'
+  batch_size: 64
+  
+  # The strategy determines which model(s) to load.
+  # Options: 'multitask' or 'ensemble'.
+  strategy: 'multitask'
+  
+  # --- Option A: Settings for the 'multitask' strategy ---
+  model:
+    name: 'YOLO' # The name of the trained multi-task model
+    weights_dir: './runs/yolo_multitask/0' # Path to the directory containing best_acc.pt
+
+  # --- Option B: Settings for the 'ensemble' strategy (mutually exclusive with Option A) ---
+  # ensemble_models:
+  #   vehicle_type:
+  #     name: 'ResNet50'
+  #     weights_dir: './runs/singletask_type/0'
+  #   vehicle_make:
+  #     name: 'EfficientNetV2'
+  #     weights_dir: './runs/singletask_make/0'
+  #   vehicle_model:
+  #     name: 'YOLO'
+  #     weights_dir: './runs/singletask_model/0'
+      
+# --- 7. Simple Inference Config (Used by inference.py and other analysis scripts) ---
+inference:
+  # Path to the directory of images you want to run predictions on.
+  source_dir: './data/inference_images'
+  
+  # Full, direct path to the single checkpoint file you want to use.
+  weights_path: './runs/standard_training/0/best_acc.pt'
+  
+  batch_size: 64
+  device: 'cuda:0'
