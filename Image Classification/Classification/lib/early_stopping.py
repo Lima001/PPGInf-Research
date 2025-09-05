@@ -4,7 +4,7 @@ class EarlyStopping:
     """
     Monitors a metric and stops training when it stops improving.
     """
-    def __init__(self, patience, mode="min", min_delta="0.0001"):
+    def __init__(self, patience, mode="min", min_delta=0.0001):
         """
         Args:
             patience: How many epochs to wait after last time the monitored metric improved.
