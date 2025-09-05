@@ -22,11 +22,11 @@ class EarlyStopping:
         self._should_stop = False
 
     @property
-    def should_stop(self) -> bool:
+    def should_stop(self):
         """Returns True if training should be stopped."""
         return self._should_stop
 
-    def step(self, metric_value: float) -> bool:
+    def step(self, metric_value):
         """
         Updates the internal state with the latest metric value.
 
