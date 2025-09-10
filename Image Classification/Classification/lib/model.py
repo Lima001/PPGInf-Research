@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision.models as models
+from ultralytics import YOLO
 
 class YOLOClassifier(nn.Module):
     """
@@ -11,31 +12,29 @@ class YOLOClassifier(nn.Module):
     allowing for simultaneous classification across different tasks.
     """
     
-    def __init__(self, backbone, task_classes, freeze=False):
+    def __init__(self, task_classes, freeze=False, yolo_variant='yolo11n-cls.pt'):
         """
         Args:
-            backbone: A pre-loaded YOLO-cls model instance.
-            task_classes (Dict[str, int]): Maps task names to their number of classes.
-            freeze (bool): If True, freezes the backbone weights.
+            task_classes: Maps task names to their number of classes.
+            freeze: If True, freezes the backbone weights.
+            yolo_variant: The specific YOLO classification model to load (e.g., 'yolo11n-cls.pt').
         """
         super().__init__()
         
-        # The YOLO-cls backbone is nested within `backbone.model.model`.
+        # The backbone is now loaded inside the class
+        backbone = YOLO(yolo_variant)
+        
         yolo_layers = list(backbone.model.model.children())
-
-        # We remove the last module, which is the classification head.
         self.backbone = nn.Sequential(*yolo_layers[:-1])
 
         if freeze:
             for param in self.backbone.parameters():
                 param.requires_grad = False
         
-        # Dynamically determine the channel dimensions from the original YOLO-cls head to ensure the new heads are compatible.
         original_head = yolo_layers[-1]
         out_channels = original_head.conv.conv.out_channels
         in_channels = original_head.conv.conv.in_channels
 
-        # Create a dictionary of task-specific heads. Each head mirrors the
         self.heads = nn.ModuleDict({
             task_name: nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
@@ -52,7 +51,6 @@ class YOLOClassifier(nn.Module):
         """Passes input through the backbone and all task-specific heads."""
         features = self.backbone(x)
         return {task_name: head(features) for task_name, head in self.heads.items()}
-
 
 class EfficientNetV2Classifier(nn.Module):
     """Multi-task classifier using a pre-trained EfficientNetV2-S as the backbone."""
@@ -226,7 +224,8 @@ MODEL_MAP = {
     "EfficientNetV2": EfficientNetV2Classifier,
     "MobileNetV3": MobileNetV3Classifier,
     "SwinTransformer": SwinTransformerClassifier,
-    "YOLO": YOLOClassifier,
+    "YOLONano": lambda task_classes, freeze: YOLOClassifier(task_classes, freeze, yolo_variant='yolo11n-cls.pt'),
+    "YOLOSmall": lambda task_classes, freeze: YOLOClassifier(task_classes, freeze, yolo_variant='yolo11s-cls.pt'),
 }
 
 def build_model(model_name, task_classes, freeze, device):
