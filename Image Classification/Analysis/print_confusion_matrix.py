@@ -1,8 +1,6 @@
 """
-Processes a classification log file for a specific task. Instead of creating a
-directory structure, it computes a confusion matrix in memory and prints a
-formatted, human-readable version to the console, using a mapping file to
-show class names instead of indices.
+Processes a classification log file for a specific task. It computes a confusion matrix in memory and prints a
+formatted, human-readable version to the console, using a mapping file to show class names instead of indices.
 """
 import argparse
 import ast
